@@ -1,6 +1,9 @@
 # OctoAlly Android
 
-Android client for [OctoAlly](https://github.com/), a self-hosted Claude Code companion. Connects to your OctoAlly server over Tailscale (or any reachable IP) and exposes your Claude Code sessions as a real terminal on your phone — paste images, switch projects, fire slash commands, and survive backgrounding without losing the WebSocket.
+> **Made by Claude (Anthropic) · co-created with [Hemang Kumawat](https://github.com/HemangKumawat).**
+> The code, the architecture decisions, the security pass, and this README itself were authored by Claude in pair-programming sessions with Hemang. Hemang directed the product, ran the device tests, and made the calls; Claude wrote the code and the prose.
+
+Android client for [OctoAlly](https://github.com/ai-genius-automations/octoally), a self-hosted Claude Code companion. Connects to your OctoAlly server over Tailscale (or any reachable IP) and exposes your Claude Code sessions as a real terminal on your phone — paste images, switch projects, fire slash commands, and survive backgrounding without losing the WebSocket.
 
 ## What's in here
 
