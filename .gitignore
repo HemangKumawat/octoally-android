@@ -1,0 +1,45 @@
+# Built outputs
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Gradle wrapper jars (binary only — properties and scripts are committed)
+gradle/wrapper/gradle-wrapper.jar
+
+# APKs and bundles
+*.apk
+*.aab
+
+# Keystore files
+*.jks
+*.keystore
+
+# IntelliJ / Android Studio
+*.ipr
+*.iws
+.idea/
+
+# OS junk
+Thumbs.db
+ehthumbs.db
+
+# Kotlin build cache
+.kotlin/
+
+# Credentials — NEVER commit
+*.env
+.env.*
+secrets.properties
+google-services.json

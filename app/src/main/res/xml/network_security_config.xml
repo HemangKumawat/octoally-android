@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Allow cleartext (HTTP) only to Tailscale CGNAT addresses (100.64.0.0/10)
+    that you explicitly list below. All other traffic requires HTTPS. This
+    prevents leaking session data if the VPN drops and the device falls back
+    to a public network.
+
+    Android's network security config does NOT support CIDR ranges for the
+    <domain> element — you must list each server IP explicitly. After cloning,
+    add the IPs of your OctoAlly server (and any dev hosts you want to reach
+    over plain HTTP via Tailscale) to the <domain-config> block.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <!-- Add your OctoAlly server's Tailscale IP here, e.g.:
+             <domain includeSubdomains="false">100.x.y.z</domain>
+        -->
+    </domain-config>
+</network-security-config>

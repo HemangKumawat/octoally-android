@@ -1,0 +1,176 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
+<link rel="stylesheet" href="xterm/xterm.css"/>
+<style>
+  html,body{margin:0;padding:0;background:#0f1117;height:100%;width:100%;overflow:hidden;color:#e4e8f1;}
+  #term{height:100%;width:100%;}
+  .xterm-viewport{background:#0f1117 !important;}
+</style>
+</head><body>
+<div id="term"></div>
+<script src="xterm/xterm.js"></script>
+<script src="xterm/xterm-addon-fit.js"></script>
+<script>
+(function(){
+  // rc10 production — xterm render surface. No WebSocket here; Kotlin owns
+  // the socket and feeds us base64 via window.__octo.write. Mirror of
+  // dashboard Terminal.tsx lines 139-171 (theme), 173-175 + 209-211 (fit),
+  // 265-276 (RAF batching).
+  var THEME = {
+    background:'#0f1117', foreground:'#e4e8f1',
+    cursor:'#0f1117', cursorAccent:'#0f1117',
+    selectionBackground:'#3b82f680',
+    black:'#1a1d27', red:'#ef4444', green:'#22c55e', yellow:'#eab308',
+    blue:'#3b82f6', magenta:'#a855f7', cyan:'#06b6d4', white:'#e4e8f1',
+    brightBlack:'#4b5563', brightRed:'#f87171', brightGreen:'#4ade80',
+    brightYellow:'#fde047', brightBlue:'#60a5fa', brightMagenta:'#c084fc',
+    brightCyan:'#22d3ee', brightWhite:'#f9fafb'
+  };
+  var term = new Terminal({
+    cursorBlink:false, cursorStyle:'bar', cursorWidth:1,
+    cursorInactiveStyle:'none',
+    fontSize:10, fontFamily:"'JetBrains Mono','Courier New',monospace",
+    scrollback:5000, allowProposedApi:true,
+    theme:THEME
+  });
+  var fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('term'));
+
+  // rc15 touch-scroll fix — xterm.js has no touch handler by default and the
+  // viewport sits under absolutely-positioned row divs, so browser-native
+  // momentum scrolling has nothing to fling against. Bind our own
+  // touchstart/move/end and translate to term.scrollLines, with rAF momentum
+  // decay on touchend.
+  // rc16 update — defer to multi-touch (pinch) by skipping our handler when
+  // touches.length > 1; the Compose-side ScaleGestureDetector consumes those.
+  (function attachTouchScroll(){
+    var el = term.element || document.getElementById('term');
+    if (!el) return;
+    var lastY = 0, vel = 0, lastT = 0, momentumId = 0;
+    function cellH() {
+      try { return term._core._renderService.dimensions.css.cell.height; }
+      catch(e) { return 16; }
+    }
+    el.addEventListener('touchstart', function(e){
+      if (e.touches.length !== 1) { cancelAnimationFrame(momentumId); return; }
+      cancelAnimationFrame(momentumId);
+      lastY = e.touches[0].clientY; lastT = Date.now(); vel = 0;
+    }, {passive:true});
+    el.addEventListener('touchmove', function(e){
+      if (e.touches.length !== 1) return;  // pinch — let it through
+      var y = e.touches[0].clientY, now = Date.now();
+      var dy = lastY - y;
+      var lines = Math.trunc(dy / cellH());
+      if (lines !== 0) { term.scrollLines(lines); lastY = y; }
+      vel = (lastY - y) / Math.max(1, now - lastT);
+      lastT = now;
+      e.preventDefault();
+    }, {passive:false});
+    el.addEventListener('touchend', function(){
+      function step(){
+        if (Math.abs(vel) < 0.05) return;
+        term.scrollLines(Math.trunc(vel * 16 / cellH()));
+        vel *= 0.92;
+        momentumId = requestAnimationFrame(step);
+      }
+      momentumId = requestAnimationFrame(step);
+    }, {passive:true});
+  })();
+
+  // RAF-batched writes — collapses bursty PTY output into one paint frame.
+  var pendingChunks = [];
+  var pendingBytes = 0;
+  var rafId = null;
+  var flushTaps = 0;
+  function flushChunks(){
+    rafId = null;
+    if (pendingChunks.length === 0) return;
+    var drained = pendingChunks.length;
+    for (var i=0; i<pendingChunks.length; i++) term.write(pendingChunks[i]);
+    pendingChunks = [];
+    pendingBytes = 0;
+    flushTaps += drained;
+    // Belt-and-suspenders log tap (rc10-exec-accelerators.md §4.1):
+    // every ~500 drained chunks, announce liveness to Kotlin/logcat.
+    if (flushTaps >= 500) {
+      console.log('WV_FLUSH taps='+flushTaps+' cols='+term.cols+' rows='+term.rows);
+      flushTaps = 0;
+    }
+  }
+
+  window.__octo = {
+    write: function(b64){
+      try {
+        var bin = atob(b64);
+        var len = bin.length;
+        var u8 = new Uint8Array(len);
+        for (var i=0; i<len; i++) u8[i] = bin.charCodeAt(i);
+        pendingChunks.push(u8);
+        pendingBytes += len;
+        // Soft cap: drop front of queue if we exceed 2MB pending (§6 #2).
+        if (pendingBytes > 2000000) {
+          while (pendingChunks.length > 1 && pendingBytes > 1000000) {
+            pendingBytes -= pendingChunks.shift().length;
+          }
+        }
+        if (rafId === null) rafId = requestAnimationFrame(flushChunks);
+      } catch (e) {
+        console.log('WV_WRITE_ERR '+e.message);
+      }
+    },
+    sys: function(text){
+      try { term.write(text); } catch(e) { console.log('WV_SYS_ERR '+e.message); }
+    },
+    clear: function(){ term.clear(); },
+    cols: function(){ return term.cols; },
+    rows: function(){ return term.rows; },
+    refit: function(){
+      try { fit.fit(); } catch(e) {}
+      return term.cols + 'x' + term.rows;
+    },
+    // rc16 — Kotlin-driven scroll (used by Compose drag overlay if needed).
+    scrollBy: function(lines){
+      try { term.scrollLines(lines | 0); } catch(e) {}
+    },
+    scrollToBottom: function(){
+      try { term.scrollToBottom(); } catch(e) {}
+    },
+    // rc16 — pinch-zoom font size. Caller passes integer 8..28.
+    setFontSize: function(px){
+      try {
+        var n = Math.max(7, Math.min(28, px | 0));
+        term.options.fontSize = n;
+        fit.fit();
+        console.log('WV_FONT_SIZE '+n+' cols='+term.cols+' rows='+term.rows);
+        return n;
+      } catch(e) { console.log('WV_FONT_ERR '+e.message); return -1; }
+    },
+    getFontSize: function(){
+      try { return term.options.fontSize; } catch(e) { return 10; }
+    },
+    // rc16 — used by Compose scrollbar overlay. Returns "viewportY,length"
+    // where length = active buffer length (rows + scrollback used).
+    getViewportInfo: function(){
+      try {
+        var b = term.buffer.active;
+        return b.viewportY + ',' + b.length + ',' + term.rows;
+      } catch(e) { return '0,0,24'; }
+    }
+  };
+
+  // First fit MUST run after layout — RAF defer, then announce ready.
+  requestAnimationFrame(function(){
+    try { fit.fit(); } catch(e) { console.log('WV_FIT_ERR '+e.message); }
+    var cols = term.cols, rows = term.rows;
+    if (!cols || cols < 2 || isNaN(cols)) cols = 80;
+    if (!rows || rows < 2 || isNaN(rows)) rows = 24;
+    setTimeout(function(){
+      console.log('WV_READY cols='+cols+' rows='+rows);
+    }, 0);
+  });
+})();
+</script>
+</body></html>
