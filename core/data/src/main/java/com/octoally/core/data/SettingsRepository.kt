@@ -58,8 +58,6 @@ class SettingsRepository @Inject constructor(
         private val KEY_UPLOAD_PORT = intPreferencesKey("server_upload_port")
         private val KEY_FONT_SIZE = intPreferencesKey("terminal_font_size")
 
-        // Empty default — first-run UI sends the user to Settings to enter
-        // their OctoAlly server's Tailscale IP. Don't bake a real IP here.
         const val DEFAULT_HOST = ""
         const val DEFAULT_MAIN_PORT = 42010
         const val DEFAULT_UPLOAD_PORT = 7799

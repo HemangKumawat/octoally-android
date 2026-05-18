@@ -45,8 +45,6 @@ import com.octoally.core.ui.theme.OctoAllyColors
 import com.octoally.core.ui.theme.ThemeController
 import com.octoally.core.ui.theme.ThemePickerSheet
 import com.octoally.feature.session.ConnectionStatus
-import com.octoally.feature.session.LineType
-import com.octoally.feature.session.RouteInfo
 import com.octoally.feature.session.SessionUiState
 import com.octoally.feature.session.SessionViewModel
 import com.octoally.feature.session.clipboard.ClipboardUploadViewModel
@@ -385,25 +383,6 @@ fun SessionScreen(
 
 /** 3 seconds of idle scroll away from bottom before spring-back fires. */
 private const val SCROLL_SNAP_BACK_DELAY_MS = 3_000L
-
-/**
- * Recover a [RouteInfo] from an output line formatted by the reducer as
- * `"[routed → provider:model]"`. Returns null when the line is not a routed
- * marker or the inner payload is malformed — the caller falls back to plain
- * text rendering in that case. Kept as a stateless helper so the parsing rule
- * lives next to the rendering rule.
- */
-internal fun parseRoutedLine(line: String): RouteInfo? {
-    val prefix = "[routed \u2192 "
-    if (!line.startsWith(prefix) || !line.endsWith("]")) return null
-    val body = line.substring(prefix.length, line.length - 1)
-    val colon = body.indexOf(':')
-    if (colon <= 0 || colon >= body.length - 1) return null
-    return RouteInfo(
-        provider = body.substring(0, colon),
-        model = body.substring(colon + 1)
-    )
-}
 
 /**
  * Append [path] to the command field, adding a leading space when the field

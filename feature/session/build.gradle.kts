@@ -52,7 +52,8 @@ dependencies {
     kapt(libs.hilt.compiler)
 
     // rc10 dual-WS: xterm.js WebView render path needs its own OkHttp socket.
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("androidx.webkit:webkit:1.11.0")
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    // rc18: folded into the version catalog (versions byte-identical, hygiene only).
+    implementation(libs.okhttp)
+    implementation(libs.androidx.webkit)
+    implementation(libs.appcompat)
 }

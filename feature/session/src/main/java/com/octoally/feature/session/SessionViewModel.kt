@@ -326,7 +326,6 @@ class SessionViewModel @Inject constructor(
         const val ARG_BASE_URL = "baseUrl"
         // DEFAULT_SESSION_ID removed rc8 — cold-launch lands on Projects list.
         // Fallback base URL — overridden by NetworkConfig from DataStore settings.
-        // Empty by default; users configure their server IP in the Settings tab.
         const val DEFAULT_BASE_URL = ""
 
         /** How many scrollback lines to retain before dropping oldest. */

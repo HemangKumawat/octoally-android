@@ -43,3 +43,7 @@ ehthumbs.db
 .env.*
 secrets.properties
 google-services.json
+
+# Agent tooling — NEVER commit (may carry MCP tokens / local config; leak shield)
+.claude/
+.mcp.json

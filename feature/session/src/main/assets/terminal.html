@@ -4,14 +4,19 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
 <link rel="stylesheet" href="xterm/xterm.css"/>
 <style>
-  html,body{margin:0;padding:0;background:#0f1117;height:100%;width:100%;overflow:hidden;color:#e4e8f1;}
-  #term{height:100%;width:100%;}
-  .xterm-viewport{background:#0f1117 !important;}
+  html,body{margin:0;padding:0;background:#0f1117;height:100%;width:100%;overflow:hidden;color:#e4e8f1;
+            touch-action:pan-y;}
+  #term{height:100%;width:100%;touch-action:pan-y;}
+  /* rc17 — claim vertical pan via touch-action so the browser doesn't try
+     to scroll on its own and conflict with our JS handler. */
+  .xterm-viewport{background:#0f1117 !important;touch-action:pan-y;}
+  .xterm-screen,.xterm{touch-action:pan-y;}
 </style>
 </head><body>
 <div id="term"></div>
 <script src="xterm/xterm.js"></script>
 <script src="xterm/xterm-addon-fit.js"></script>
+<script src="xterm/xterm-addon-search.js"></script>
 <script>
 (function(){
   // rc10 production — xterm render surface. No WebSocket here; Kotlin owns
@@ -37,42 +42,72 @@
   });
   var fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
+  // rc21 — search addon over the 5000-line scrollback (board 1.2, the
+  // no-server LOW-risk daily-driver win). Same UMD/loadAddon pattern as
+  // FitAddon; bundled (no network). Failure to construct must NOT break
+  // the terminal — guard it so a bad addon load can't black-body the surface.
+  var search = null;
+  try {
+    if (window.SearchAddon && SearchAddon.SearchAddon) {
+      search = new SearchAddon.SearchAddon();
+      term.loadAddon(search);
+    } else {
+      console.log('WV_SEARCH_ERR addon-missing');
+    }
+  } catch(se) { console.log('WV_SEARCH_ERR '+se.message); search = null; }
   term.open(document.getElementById('term'));
 
-  // rc15 touch-scroll fix — xterm.js has no touch handler by default and the
-  // viewport sits under absolutely-positioned row divs, so browser-native
-  // momentum scrolling has nothing to fling against. Bind our own
-  // touchstart/move/end and translate to term.scrollLines, with rAF momentum
-  // decay on touchend.
-  // rc16 update — defer to multi-touch (pinch) by skipping our handler when
-  // touches.length > 1; the Compose-side ScaleGestureDetector consumes those.
+  // rc17 touch-scroll rewrite. Three changes vs rc15/16:
+  //  1. Bind to the .xterm-viewport (the actual scrollable div xterm renders
+  //     INSIDE term.element). The wrapper element has a floating textarea-
+  //     helper on top that absorbs touchstart in some configurations.
+  //  2. Accumulate fractional lines (dy/cellH) instead of Math.trunc per move.
+  //     Old code dropped any drag smaller than one cell-height (~15-22px),
+  //     making short flicks feel dead.
+  //  3. Diagnostic console.log on touchstart so logcat can prove the handler
+  //     is firing (look for "WV_TOUCH start" in TerminalWebView log).
   (function attachTouchScroll(){
-    var el = term.element || document.getElementById('term');
+    var el = term.element.querySelector('.xterm-viewport') || term.element;
     if (!el) return;
     var lastY = 0, vel = 0, lastT = 0, momentumId = 0;
+    var lineAcc = 0;
     function cellH() {
-      try { return term._core._renderService.dimensions.css.cell.height; }
-      catch(e) { return 16; }
+      try {
+        var h = term._core._renderService.dimensions.css.cell.height;
+        if (typeof h === 'number' && h > 0) return h;
+      } catch(e) {}
+      try {
+        var r = el.getBoundingClientRect();
+        if (r.height > 0 && term.rows > 0) return r.height / term.rows;
+      } catch(e) {}
+      return 16;
     }
     el.addEventListener('touchstart', function(e){
       if (e.touches.length !== 1) { cancelAnimationFrame(momentumId); return; }
       cancelAnimationFrame(momentumId);
-      lastY = e.touches[0].clientY; lastT = Date.now(); vel = 0;
+      lastY = e.touches[0].clientY; lastT = Date.now(); vel = 0; lineAcc = 0;
+      console.log('WV_TOUCH start cellH=' + cellH().toFixed(1) + ' rows=' + term.rows);
     }, {passive:true});
     el.addEventListener('touchmove', function(e){
       if (e.touches.length !== 1) return;  // pinch — let it through
       var y = e.touches[0].clientY, now = Date.now();
       var dy = lastY - y;
-      var lines = Math.trunc(dy / cellH());
-      if (lines !== 0) { term.scrollLines(lines); lastY = y; }
+      lineAcc += dy / cellH();
+      if (Math.abs(lineAcc) >= 1) {
+        var whole = Math.trunc(lineAcc);
+        term.scrollLines(whole);
+        lineAcc -= whole;
+      }
       vel = (lastY - y) / Math.max(1, now - lastT);
+      lastY = y;
       lastT = now;
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
     }, {passive:false});
     el.addEventListener('touchend', function(){
       function step(){
         if (Math.abs(vel) < 0.05) return;
-        term.scrollLines(Math.trunc(vel * 16 / cellH()));
+        var lines = Math.trunc(vel * 16 / cellH());
+        if (lines !== 0) term.scrollLines(lines);
         vel *= 0.92;
         momentumId = requestAnimationFrame(step);
       }
@@ -131,10 +166,6 @@
       try { fit.fit(); } catch(e) {}
       return term.cols + 'x' + term.rows;
     },
-    // rc16 — Kotlin-driven scroll (used by Compose drag overlay if needed).
-    scrollBy: function(lines){
-      try { term.scrollLines(lines | 0); } catch(e) {}
-    },
     scrollToBottom: function(){
       try { term.scrollToBottom(); } catch(e) {}
     },
@@ -148,16 +179,25 @@
         return n;
       } catch(e) { console.log('WV_FONT_ERR '+e.message); return -1; }
     },
-    getFontSize: function(){
-      try { return term.options.fontSize; } catch(e) { return 10; }
-    },
-    // rc16 — used by Compose scrollbar overlay. Returns "viewportY,length"
-    // where length = active buffer length (rows + scrollback used).
-    getViewportInfo: function(){
+    // rc21 — find-in-scrollback (board 1.2). No silent catch: any error
+    // is logged WV_SEARCH_ERR so a broken search can't pass unnoticed.
+    findNext: function(q){
       try {
-        var b = term.buffer.active;
-        return b.viewportY + ',' + b.length + ',' + term.rows;
-      } catch(e) { return '0,0,24'; }
+        if (!search || !q) return false;
+        return !!search.findNext(String(q), { caseSensitive:false, decorations:{
+          matchOverviewRuler:'#eab308', activeMatchColorOverviewRuler:'#22c55e' } });
+      } catch(e) { console.log('WV_SEARCH_ERR next '+e.message); return false; }
+    },
+    findPrev: function(q){
+      try {
+        if (!search || !q) return false;
+        return !!search.findPrevious(String(q), { caseSensitive:false, decorations:{
+          matchOverviewRuler:'#eab308', activeMatchColorOverviewRuler:'#22c55e' } });
+      } catch(e) { console.log('WV_SEARCH_ERR prev '+e.message); return false; }
+    },
+    clearSearch: function(){
+      try { if (search && search.clearDecorations) search.clearDecorations(); }
+      catch(e) { console.log('WV_SEARCH_ERR clear '+e.message); }
     }
   };
 
@@ -169,6 +209,34 @@
     if (!rows || rows < 2 || isNaN(rows)) rows = 24;
     setTimeout(function(){
       console.log('WV_READY cols='+cols+' rows='+rows);
+      // rc21 — render-regression tripwire (board BS-2 mitigation, made
+      // executable). The Phase-4 emulator gate greps WV_TRIPWIRE: it FAILS
+      // the ship if "WV_TRIPWIRE ok" is absent or "WV_TRIPWIRE FAIL" present.
+      // Asserts the three historical rc10-14 failure modes can't ship blind:
+      //   (i)  body background is the dark theme (not the black-body bug)
+      //   (ii) cols/rows are sane (not the garbage-dims clamp path)
+      //   (iii) the xterm element exists with non-zero bounds (WebView surface)
+      // NO silent catch — any throw emits WV_TRIPWIRE FAIL so the gate blocks.
+      try {
+        var realCols = term.cols, realRows = term.rows;
+        var bg = '';
+        try { bg = (window.getComputedStyle(document.body).backgroundColor || ''); } catch(e2) { bg = ''; }
+        // rgb(15, 17, 23) === #0f1117 (the theme bg). A black-body regression
+        // renders rgb(0, 0, 0) or transparent — both fail this.
+        var bgOk = (bg.replace(/\s+/g,'') === 'rgb(15,17,23)');
+        var dimsOk = (typeof realCols === 'number' && realCols >= 2 && !isNaN(realCols) &&
+                      typeof realRows === 'number' && realRows >= 2 && !isNaN(realRows));
+        var elOk = !!(term.element && term.element.offsetHeight > 0 && term.element.offsetWidth > 0);
+        if (bgOk && dimsOk && elOk) {
+          console.log('WV_TRIPWIRE ok bg='+bg.replace(/\s+/g,'')+' cols='+realCols+' rows='+realRows+
+                      ' h='+term.element.offsetHeight);
+        } else {
+          console.log('WV_TRIPWIRE FAIL bgOk='+bgOk+'('+bg+') dimsOk='+dimsOk+
+                      '(cols='+realCols+',rows='+realRows+') elOk='+elOk);
+        }
+      } catch(tw) {
+        console.log('WV_TRIPWIRE FAIL exception='+tw.message);
+      }
     }, 0);
   });
 })();

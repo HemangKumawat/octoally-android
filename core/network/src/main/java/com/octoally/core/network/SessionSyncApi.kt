@@ -22,14 +22,11 @@ interface SessionSyncApi {
     /**
      * Decrement the ref-count for [sessionId]. When it hits zero and the
      * session has been quiet for a short grace window, the service closes
-     * the underlying WebSocket. Prefer this over [removeSession] in VM
-     * lifecycle callbacks — it avoids killing sockets across quick
-     * nav re-entries (e.g. rotation, re-opening the same session).
+     * the underlying WebSocket. Used by VM lifecycle callbacks — it avoids
+     * killing sockets across quick nav re-entries (e.g. rotation, re-opening
+     * the same session).
      */
     fun stopObserving(sessionId: String)
-
-    /** Remove a session explicitly (disconnect its WebSocket, ignore ref-count). */
-    fun removeSession(sessionId: String)
 
     /**
      * Bypass backoff and reconnect immediately. No-ops if the session is unknown.

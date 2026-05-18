@@ -50,11 +50,6 @@ class SessionSyncService : LifecycleService(), SessionSyncApi {
     @Inject lateinit var hookNotifier: HookNotifier
 
     inner class SyncBinder : Binder(), SessionSyncBinderApi {
-        /**
-         * Retained for any legacy reflection consumers. Prefer [getApi].
-         */
-        fun getService(): SessionSyncService = this@SessionSyncService
-
         override fun getApi(): SessionSyncApi = this@SessionSyncService
     }
 
@@ -205,13 +200,6 @@ class SessionSyncService : LifecycleService(), SessionSyncApi {
         is AgentEvent.HookNotification -> sessionId
         AgentEvent.Connected, AgentEvent.Stale,
         is AgentEvent.Reconnecting, is AgentEvent.RouteDecision -> null
-    }
-
-    /** Remove a session explicitly. */
-    override fun removeSession(sessionId: String) {
-        sessions.remove(sessionId)?.client?.disconnect()
-        updateNotification()
-        if (sessions.isEmpty()) stopSelf()
     }
 
     /** Bypass backoff and reconnect immediately. No-ops if session unknown. */

@@ -14,8 +14,8 @@ android {
         applicationId = "com.octoally.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 35
-        versionName = "2.0.0-rc16"
+        versionCode = 40
+        versionName = "2.0.0-rc21"
     }
 
     buildFeatures {

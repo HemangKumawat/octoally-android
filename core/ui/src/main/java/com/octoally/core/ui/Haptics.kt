@@ -15,7 +15,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
  *
  * The lambda is cheap (fires the system HapticFeedback service) so callers
  * can inline it in onClick lambdas without churn. Centralised so the
- * intensity / type can be swapped in one place if the user says "too much"
+ * intensity / type can be swapped in one place if Hemang says "too much"
  * or "more" — Material3 only exposes two HapticFeedbackType variants
  * (LongPress = ~30ms tick, TextHandleMove = ~10ms shorter tick), we map
  * "tap" → LongPress (felt as a confident click) and "edge" → TextHandleMove

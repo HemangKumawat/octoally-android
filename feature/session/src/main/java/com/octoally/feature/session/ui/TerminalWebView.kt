@@ -25,15 +25,41 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
 import kotlinx.coroutines.CoroutineScope
@@ -119,6 +145,13 @@ fun TerminalWebView(
     val scope = rememberCoroutineScope()
     val holder = remember(sessionId, baseUrl) { TerminalWebViewPool.acquire(sessionId) }
 
+    // rc21 — find-in-scrollback bar (board 1.2). Self-contained in this
+    // composable so SessionScreen wiring is untouched (scope-fence). NOT a
+    // ModalBottomSheet — inline overlay, so the Material3 two-sheet crash
+    // rule cannot be tripped.
+    var searchOpen by remember(sessionId) { mutableStateOf(false) }
+    var searchQuery by remember(sessionId) { mutableStateOf("") }
+
     DisposableEffect(sessionId, baseUrl) {
         // Bind the holder to this scope's fetchDisplay (so re-entry into the
         // same session uses the latest VM method binding). Idempotent.
@@ -133,10 +166,23 @@ fun TerminalWebView(
 
     Box(
         modifier = modifier.pointerInput(sessionId) {
-            detectTransformGestures { _, _, zoom, _ ->
-                if (zoom != 1f) {
-                    holder.applyZoom(zoom)
-                }
+            // rc19 — pinch-zoom must NOT consume single-finger drags, or
+            // terminal.html's one-finger touch-scroll handler is starved
+            // (symptom: only two-finger scroll worked). Engage AND consume
+            // ONLY when 2+ pointers are down; single-finger pointer events
+            // are left unconsumed so they fall through to the WebView/xterm.
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                do {
+                    val event = awaitPointerEvent()
+                    if (event.changes.count { it.pressed } >= 2) {
+                        val zoom = event.calculateZoom()
+                        if (zoom != 1f) {
+                            holder.applyZoom(zoom)
+                            event.changes.forEach { it.consume() }
+                        }
+                    }
+                } while (event.changes.any { it.pressed })
             }
         }
     ) {
@@ -159,6 +205,72 @@ fun TerminalWebView(
                 }
             },
         )
+
+        // rc21 — search affordance. Collapsed = a single small icon
+        // (top-right). Expanded = a compact find bar. Pure client-side
+        // (xterm-addon-search over the 5000-line scrollback); no WS frame.
+        if (!searchOpen) {
+            IconButton(
+                onClick = { searchOpen = true },
+                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = "Find in terminal",
+                    tint = Color(0xFF8B93A7),
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .background(Color(0xFF1A1D27))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = {
+                        searchQuery = it
+                        if (it.isEmpty()) holder.clearFind()
+                    },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("Find", fontSize = 13.sp) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = { holder.find(searchQuery, forward = true) },
+                    ),
+                )
+                IconButton(onClick = { holder.find(searchQuery, forward = false) }) {
+                    Icon(
+                        Icons.Filled.KeyboardArrowUp,
+                        contentDescription = "Previous match",
+                        tint = Color(0xFFE4E8F1),
+                    )
+                }
+                IconButton(onClick = { holder.find(searchQuery, forward = true) }) {
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Next match",
+                        tint = Color(0xFFE4E8F1),
+                    )
+                }
+                IconButton(onClick = {
+                    searchOpen = false
+                    searchQuery = ""
+                    holder.clearFind()
+                }) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Close find",
+                        tint = Color(0xFFE4E8F1),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -323,6 +435,29 @@ private class TerminalHolder {
         val wv = webView ?: return
         wv.post {
             wv.evaluateJavascript("window.__octo && window.__octo.setFontSize($clamped);", null)
+        }
+    }
+
+    /**
+     * rc21 — find-in-scrollback (board 1.2). Bridges to xterm-addon-search via
+     * window.__octo.findNext / findPrev. Pure client, no socket/WS interaction.
+     * JSONObject.quote produces a JS-safe string literal (same hardening as
+     * injectSys — a query with quotes/line-terminators can't break out).
+     */
+    fun find(query: String, forward: Boolean) {
+        val wv = webView ?: return
+        if (query.isEmpty()) return
+        val q = JSONObject.quote(query)
+        val fn = if (forward) "findNext" else "findPrev"
+        wv.post {
+            wv.evaluateJavascript("window.__octo && window.__octo.$fn($q);", null)
+        }
+    }
+
+    fun clearFind() {
+        val wv = webView ?: return
+        wv.post {
+            wv.evaluateJavascript("window.__octo && window.__octo.clearSearch();", null)
         }
     }
 

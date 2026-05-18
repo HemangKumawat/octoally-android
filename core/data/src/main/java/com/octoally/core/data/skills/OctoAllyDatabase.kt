@@ -5,7 +5,7 @@ import androidx.room.RoomDatabase
 
 /**
  * Database housing per-project skill UX state ported from the localStorage
- * layer of the OctoAlly web fork:
+ * layer of Hemang's OctoAlly web fork:
  *   - pinned skills (manual user pins)
  *   - recent skills (LRU, cap 10 per project, managed by [RecentSkillDao.touch])
  *   - skill frequency (counter + last-used timestamp, feeds weighted suggestions)
